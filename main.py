@@ -103,6 +103,8 @@ class Engine:
         self._speedup = speedup
 
     def update(self, time_delta: float) -> None:
+        if not self.has_propellants():
+            return
         if self.is_speedup_active():
             self._fuel.change(-FUEL_CONSUMPTION_PER_SECOND * time_delta)
             self._oxidizer.change(-OXIDIZER_CONSUMPTION_PER_SECOND * time_delta)
@@ -149,8 +151,16 @@ class Booster(Entity):
 
 
 class Game:
-    def __init__(self, surface_rect: pygame.Rect):
+    def __init__(
+        self,
+        surface_rect: pygame.Rect,
+        maxtime: float = float("inf"),
+        control_type: Literal["scroll", "cursor", "ai"] = "cursor",
+    ):
+        self.time = 0.0
         self.surface_rect = surface_rect
+        self.maxtime = maxtime
+        self.control_type = control_type
         self.center = Vector2(surface_rect.center)
         self.player = Player(
             self.center.copy(),
@@ -207,21 +217,36 @@ class Game:
             self.spawn_booster_timer.reset(with_max_time=random.uniform(2, 7))
 
     def update(self, time_delta):
+        if not self.is_running():
+            return
+        self.time += time_delta
         self.player.update(time_delta)
         self.toroidal_space()
         self.process_collisions()
         self.process_timers(time_delta)
+        if self.control_type == "ai":
+            control_player_random_action(self.player, self)
+
+    def is_running(self) -> bool:
+        return self.player.is_alive() and self.time < self.maxtime
+
+
+def control_player_random_action(player: Player, game: Game):
+    player.rotate_acc(random.uniform(-1, 1) * ACCELERATION_ROTATION_PER_SCROLL)
+    player.engine.on() if random.random() < 0.5 else player.engine.off()
+    if player.engine:
+        player.engine.set_speedup(random.random() < 0.5)
 
 
 class GameScreen(Screen):
     def __init__(
         self,
         surface: Surface,
-        control_type: Literal["scroll", "cursor"] = "cursor",
+        control_type: Literal["scroll", "cursor", "ai"] = "cursor",
         debug: bool = False,
     ):
         super().__init__(surface)
-        self.game = Game(surface.get_rect())
+        self.game = Game(surface.get_rect(), control_type=control_type)
         self.control_type = control_type
         self.debug = debug
 
