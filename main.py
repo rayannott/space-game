@@ -1,13 +1,14 @@
 import random
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
-from typing import Literal
+from typing import Iterable, Literal
+from enum import Enum, auto
 
 import pygame
 from pygame import Surface, Vector2, Color
 from screen import Screen, FRAMERATE
 
-from utils import random_unit_vector, Slider
+from utils import random_unit_vector, Slider, Timer
 from front_utils import draw_circular_status_bar
 
 
@@ -28,12 +29,18 @@ FRICTION_COEFF = (1 - FRICTION_PER_SECOND) ** (1 / FRAMERATE)
 PLAYER_SIZE = 12
 PLAYER_ACC_AMPLITUDE = 500.0
 
-FUEL_CONSUMPTION_PER_SECOND = 0.1
-OXIDIZER_CONSUMPTION_PER_SECOND = 0.2
+FUEL_CONSUMPTION_PER_SECOND = 0.2
+OXIDIZER_CONSUMPTION_PER_SECOND = 0.15
 
 
 def get_mouse_pos() -> Vector2:
     return Vector2(pygame.mouse.get_pos())
+
+
+def get_random_screen_pos(surface_rect: pygame.Rect) -> Vector2:
+    return Vector2(
+        random.randint(0, surface_rect.width), random.randint(0, surface_rect.height)
+    )
 
 
 class Entity(ABC):
@@ -43,17 +50,31 @@ class Entity(ABC):
         vel: Vector2,
         size: int,
         acc: Vector2 | None = None,
+        lifetime: float = float("inf"),
     ):
         self.pos = pos
         self.vel = vel
         self.size = size
         self.acc = Vector2(0, 0) if acc is None else acc
+        self._lifetime = lifetime
+        self.lifetime_timer = Timer(max_time=lifetime)
+        self._alive = True
 
     @abstractmethod
     def update(self, time_delta: float):
         self.pos += self.vel * time_delta
         self.vel += self.acc * time_delta
         self.vel *= FRICTION_COEFF
+        self.lifetime_timer.tick(time_delta)
+
+    def is_alive(self) -> bool:
+        return self._alive and self.lifetime_timer.running()
+
+    def kill(self) -> None:
+        self._alive = False
+
+    def collides_with(self, other: "Entity") -> bool:
+        return self.pos.distance_squared_to(other.pos) < (self.size + other.size) ** 2
 
 
 @dataclass
@@ -67,7 +88,7 @@ class Engine:
     def get(self) -> int:
         if not (self._on and self.has_propellants()):
             return 0
-        return 9 if self._speedup else 3
+        return 8 if self._speedup else 2
 
     def on(self) -> None:
         self._on = True
@@ -100,16 +121,31 @@ class Player(Entity):
     def __init__(self, pos: Vector2, vel: Vector2, acc: Vector2):
         super().__init__(pos, vel, PLAYER_SIZE, acc)
         self.engine = Engine()
-        self.fuel = Slider(1.0, 0.5)
-        self.oxidizer = Slider(1.0, 0.5)
 
     def update(self, time_delta: float):
         self.pos += self.vel * time_delta
         self.vel += self.engine.get() * self.acc * time_delta
         self.vel *= FRICTION_COEFF
+        self.engine.update(time_delta)
+        self.lifetime_timer.tick(time_delta)
 
     def rotate_acc(self, angle: float):
         self.acc.rotate_ip(angle)
+
+
+class BoosterType(Enum):
+    FUEL = auto()
+    OXIDIZER = auto()
+
+
+class Booster(Entity):
+    def __init__(self, pos: Vector2, booster_type: BoosterType, amount: float):
+        super().__init__(pos, Vector2(), 10, Vector2(), lifetime=10)
+        self.booster_type = booster_type
+        self.amount = amount
+
+    def update(self, time_delta: float):
+        return super().update(time_delta)
 
 
 class Game:
@@ -121,11 +157,28 @@ class Game:
             Vector2(),
             PLAYER_ACC_AMPLITUDE * random_unit_vector(),
         )
+        self.e_boosters: list[Booster] = []
 
-    def update(self, time_delta):
-        self.player.update(time_delta)
-        self.player.engine.update(time_delta)
-        # toroidal space
+        # timers
+        self.clean_dead_entities_timer = Timer(max_time=1.0)
+        self.spawn_booster_timer = Timer(max_time=1.0)
+
+    def boosters(self) -> Iterable[Booster]:
+        return (booster for booster in self.e_boosters if booster.is_alive())
+
+    def clean_dead_entities(self):
+        self.e_boosters = list(self.boosters())
+
+    def process_collisions(self):
+        for booster in self.boosters():
+            if booster.collides_with(self.player):
+                if booster.booster_type == BoosterType.FUEL:
+                    self.player.engine._fuel.change(booster.amount)
+                elif booster.booster_type == BoosterType.OXIDIZER:
+                    self.player.engine._oxidizer.change(booster.amount)
+                booster.kill()
+
+    def toroidal_space(self):
         if not self.surface_rect.collidepoint(self.player.pos):
             if self.player.pos.x < 0:
                 self.player.pos.x = self.surface_rect.width
@@ -135,6 +188,29 @@ class Game:
                 self.player.pos.y = self.surface_rect.height
             elif self.player.pos.y > self.surface_rect.height:
                 self.player.pos.y = 0
+
+    def process_timers(self, time_delta):
+        self.clean_dead_entities_timer.tick(time_delta)
+        if not self.clean_dead_entities_timer.running():
+            self.clean_dead_entities()
+            self.clean_dead_entities_timer.reset()
+
+        self.spawn_booster_timer.tick(time_delta)
+        if not self.spawn_booster_timer.running():
+            self.e_boosters.append(
+                Booster(
+                    get_random_screen_pos(self.surface_rect),
+                    random.choice(list(BoosterType)),
+                    random.uniform(0.1, 0.4),
+                )
+            )
+            self.spawn_booster_timer.reset(with_max_time=random.uniform(2, 7))
+
+    def update(self, time_delta):
+        self.player.update(time_delta)
+        self.toroidal_space()
+        self.process_collisions()
+        self.process_timers(time_delta)
 
 
 class GameScreen(Screen):
@@ -178,6 +254,24 @@ class GameScreen(Screen):
         self.render()
 
     def render(self):
+        # boosters
+        for booster in self.game.boosters():
+            pygame.draw.circle(
+                self.surface,
+                RED if booster.booster_type == BoosterType.FUEL else BLUE,
+                booster.pos,
+                booster.size,
+            )
+            # draw_circular_status_bar(
+            #     self.surface,
+            #     booster.pos,
+            #     booster.lifetime_timer.get_slider(),
+            #     booster.size + 3,
+            #     color=RED if booster.booster_type == BoosterType.FUEL else BLUE,
+            #     draw_full=True,
+            #     width=3,
+            # )
+
         # thrust animation
         if self.game.player.engine and self.game.player.engine.get():
             speedup = self.game.player.engine.is_speedup_active()
@@ -203,21 +297,21 @@ class GameScreen(Screen):
         # fuel and oxidizer
         draw_circular_status_bar(
             self.surface,
-            self.game.player.pos,
+            self.game.center,
             self.game.player.engine._fuel,
-            self.game.player.size + 7,
+            self.game.player.size + 15,
             color=RED,
             draw_full=True,
-            width=2,
+            width=3,
         )
         draw_circular_status_bar(
             self.surface,
-            self.game.player.pos,
+            self.game.center,
             self.game.player.engine._oxidizer,
-            self.game.player.size + 5,
+            self.game.player.size + 10,
             color=BLUE,
             draw_full=True,
-            width=2,
+            width=3,
         )
         if self.debug:
             pygame.draw.line(
