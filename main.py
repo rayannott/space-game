@@ -157,7 +157,7 @@ class GameScreen(Screen):
         # thrust animation
         if self.game.player.engine:
             speedup = self.game.player.engine.is_speedup_on()
-            point_behind = self.game.player.pos - self.game.player.acc.normalize() * (100 if speedup else 30)
+            point_behind = self.game.player.pos - self.game.player.acc.normalize() * (50 if speedup else 30)
             for _ in range(10 if speedup else 5):
                 color = random.choice([WHITE, MAGENTA, CYAN])
                 pygame.draw.line(
@@ -171,7 +171,7 @@ class GameScreen(Screen):
         # drawing
         pygame.draw.circle(
             self.surface,
-            WHITE if not self.game.player.engine else MAGENTA,
+            WHITE,
             self.game.player.pos,
             10,
         )
@@ -194,10 +194,10 @@ class GameScreen(Screen):
 
         # cursor controls
         if self.control_type == "cursor":
-            pygame.draw.circle(self.surface, GREEN, self.game.center, 40, 2)
+            pygame.draw.circle(self.surface, GRAY, self.game.center, 40, 2)
             pygame.draw.circle(
                 self.surface,
-                GREEN,
+                GRAY,
                 self.game.center + self.game.player.acc.normalize() * 40,
                 5,
             )
