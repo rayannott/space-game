@@ -57,7 +57,7 @@ class Engine:
         if not self._on:
             return 0
         return self.strength if self._speedup else 1
-    
+
     def on(self) -> None:
         self._on = True
 
@@ -86,7 +86,8 @@ class Player(Entity):
 
 
 class Game:
-    def __init__(self):
+    def __init__(self, surface_rect: pygame.Rect):
+        self.surface_rect = surface_rect
         self.player = Player(
             Vector2(600.0, 200.0),
             Vector2(0.0, 0.0),
@@ -96,12 +97,22 @@ class Game:
     def update(self, time_delta):
         self.player.update(time_delta)
 
+        # toroidal space
+        if not self.surface_rect.collidepoint(self.player.pos):
+            if self.player.pos.x < 0:
+                self.player.pos.x = self.surface_rect.width
+            elif self.player.pos.x > self.surface_rect.width:
+                self.player.pos.x = 0
+            if self.player.pos.y < 0:
+                self.player.pos.y = self.surface_rect.height
+            elif self.player.pos.y > self.surface_rect.height:
+                self.player.pos.y = 0
+
 
 class GameScreen(Screen):
     def __init__(self, surface: Surface):
         super().__init__(surface)
-        self.game = Game()
-        self.drawing_offset = Vector2(0, 0)
+        self.game = Game(surface.get_rect())
 
     def process_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
@@ -122,10 +133,6 @@ class GameScreen(Screen):
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 self.is_running = False
-            elif event.key == pygame.K_SPACE:
-                self.drawing_offset = (
-                    Vector2(self.surface.get_rect().center) - self.game.player.pos
-                )
 
     def update(self, time_delta):
         self.game.update(time_delta)
@@ -134,23 +141,21 @@ class GameScreen(Screen):
         pygame.draw.circle(
             self.surface,
             WHITE if not self.game.player.engine else MAGENTA,
-            self.game.player.pos + self.drawing_offset,
+            self.game.player.pos,
             10,
         )
         pygame.draw.line(
             self.surface,
             GRAY if not self.game.player.engine else MAGENTA,
-            self.game.player.pos + self.drawing_offset,
-            self.game.player.pos
-            + self.game.player.acc.normalize() * 30
-            + self.drawing_offset,
+            self.game.player.pos,
+            self.game.player.pos + self.game.player.acc.normalize() * 30,
             width=self.game.player.engine.get() * 2 + 1,
         )
         pygame.draw.line(
             self.surface,
             GREEN,
-            self.game.player.pos + self.drawing_offset,
-            self.game.player.pos + self.game.player.vel * 0.1 + self.drawing_offset,
+            self.game.player.pos,
+            self.game.player.pos + self.game.player.vel * 0.1,
             width=2,
         )
 
