@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
+from typing import Literal
 
 import pygame
 from pygame import Surface, Vector2, Color
@@ -88,6 +89,7 @@ class Player(Entity):
 class Game:
     def __init__(self, surface_rect: pygame.Rect):
         self.surface_rect = surface_rect
+        self.center = Vector2(surface_rect.center)
         self.player = Player(
             Vector2(600.0, 200.0),
             Vector2(0.0, 0.0),
@@ -110,13 +112,14 @@ class Game:
 
 
 class GameScreen(Screen):
-    def __init__(self, surface: Surface):
+    def __init__(self, surface: Surface, control_type: Literal['scroll', 'cursor'] = 'cursor'):
         super().__init__(surface)
         self.game = Game(surface.get_rect())
+        self.control_type = control_type
 
     def process_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
-            if event.button in {4, 5}:
+            if self.control_type == 'scroll' and event.button in {4, 5}:
                 self.game.player.rotate_acc(
                     (1 if event.button == 4 else -1) * ACCELERATION_ROTATION_PER_SCROLL
                 )
@@ -129,7 +132,9 @@ class GameScreen(Screen):
                 self.game.player.engine.off()
             elif event.button == 3:
                 self.game.player.engine.set_speedup(False)
-
+        elif self.control_type == 'cursor' and event.type == pygame.MOUSEMOTION:
+            acc_magn = self.game.player.acc.magnitude()
+            self.game.player.acc = (get_mouse_pos() - self.game.center).normalize() * acc_magn
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 self.is_running = False
@@ -159,11 +164,21 @@ class GameScreen(Screen):
             width=2,
         )
 
+        # cursor controls
+        if self.control_type == 'cursor':
+            pygame.draw.circle(self.surface, GREEN, self.game.center, 40, 2)
+            pygame.draw.circle(
+                self.surface,
+                GREEN,
+                self.game.center + self.game.player.acc.normalize() * 40,
+                5,
+            )
+
 
 def main():
     pygame.init()
     screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-    game_screen = GameScreen(screen)
+    game_screen = GameScreen(screen, control_type='cursor')
     game_screen.run()
     pygame.quit()
 
