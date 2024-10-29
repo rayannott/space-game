@@ -7,7 +7,8 @@ import pygame
 from pygame import Surface, Vector2, Color
 from screen import Screen, FRAMERATE
 
-from utils import random_unit_vector
+from utils import random_unit_vector, Slider
+from front_utils import draw_circular_status_bar
 
 
 # colors:
@@ -16,6 +17,8 @@ MAGENTA = Color("magenta")
 GREEN = Color("green")
 GRAY = Color("gray")
 CYAN = Color("cyan")
+RED = Color("red")
+BLUE = Color("blue")
 
 ACCELERATION_ROTATION_PER_SCROLL = 20
 FRICTION_PER_SECOND = 0.05  # vel amplitude is decreased by 5% per second
@@ -24,6 +27,9 @@ FRICTION_COEFF = (1 - FRICTION_PER_SECOND) ** (1 / FRAMERATE)
 
 PLAYER_SIZE = 12
 PLAYER_ACC_AMPLITUDE = 500.0
+
+FUEL_CONSUMPTION_PER_SECOND = 0.1
+OXIDIZER_CONSUMPTION_PER_SECOND = 0.2
 
 
 def get_mouse_pos() -> Vector2:
@@ -55,8 +61,11 @@ class Engine:
     _on: bool = False
     _speedup: bool = False
 
+    _fuel: Slider = Slider(1.0, 0.5)
+    _oxidizer: Slider = Slider(1.0, 0.5)
+
     def get(self) -> int:
-        if not self._on:
+        if not (self._on and self.has_propellants()):
             return 0
         return 9 if self._speedup else 3
 
@@ -66,11 +75,22 @@ class Engine:
     def off(self) -> None:
         self._on = False
 
-    def is_speedup_on(self) -> bool:
-        return self._speedup
+    def is_speedup_active(self) -> bool:
+        return self._on and self._speedup
 
     def set_speedup(self, speedup: bool) -> None:
         self._speedup = speedup
+
+    def update(self, time_delta: float) -> None:
+        if self.is_speedup_active():
+            self._fuel.change(-FUEL_CONSUMPTION_PER_SECOND * time_delta)
+            self._oxidizer.change(-OXIDIZER_CONSUMPTION_PER_SECOND * time_delta)
+        elif self._on:
+            self._fuel.change(-0.1 * FUEL_CONSUMPTION_PER_SECOND * time_delta)
+            self._oxidizer.change(-0.1 * OXIDIZER_CONSUMPTION_PER_SECOND * time_delta)
+
+    def has_propellants(self) -> bool:
+        return self._fuel.is_alive() and self._oxidizer.is_alive()
 
     def __bool__(self) -> bool:
         return self._on
@@ -80,6 +100,8 @@ class Player(Entity):
     def __init__(self, pos: Vector2, vel: Vector2, acc: Vector2):
         super().__init__(pos, vel, PLAYER_SIZE, acc)
         self.engine = Engine()
+        self.fuel = Slider(1.0, 0.5)
+        self.oxidizer = Slider(1.0, 0.5)
 
     def update(self, time_delta: float):
         self.pos += self.vel * time_delta
@@ -102,7 +124,7 @@ class Game:
 
     def update(self, time_delta):
         self.player.update(time_delta)
-
+        self.player.engine.update(time_delta)
         # toroidal space
         if not self.surface_rect.collidepoint(self.player.pos):
             if self.player.pos.x < 0:
@@ -153,11 +175,15 @@ class GameScreen(Screen):
 
     def update(self, time_delta):
         self.game.update(time_delta)
-        
+        self.render()
+
+    def render(self):
         # thrust animation
-        if self.game.player.engine:
-            speedup = self.game.player.engine.is_speedup_on()
-            point_behind = self.game.player.pos - self.game.player.acc.normalize() * (50 if speedup else 30)
+        if self.game.player.engine and self.game.player.engine.get():
+            speedup = self.game.player.engine.is_speedup_active()
+            point_behind = self.game.player.pos - self.game.player.acc.normalize() * (
+                50 if speedup else 30
+            )
             for _ in range(10 if speedup else 5):
                 color = random.choice([WHITE, MAGENTA, CYAN])
                 pygame.draw.line(
@@ -167,13 +193,31 @@ class GameScreen(Screen):
                     point_behind + random_unit_vector() * random.uniform(2, 5),
                     width=6 if speedup else 2,
                 )
-
-        # drawing
+        # player
         pygame.draw.circle(
             self.surface,
             WHITE,
             self.game.player.pos,
             10,
+        )
+        # fuel and oxidizer
+        draw_circular_status_bar(
+            self.surface,
+            self.game.player.pos,
+            self.game.player.engine._fuel,
+            self.game.player.size + 7,
+            color=RED,
+            draw_full=True,
+            width=2,
+        )
+        draw_circular_status_bar(
+            self.surface,
+            self.game.player.pos,
+            self.game.player.engine._oxidizer,
+            self.game.player.size + 5,
+            color=BLUE,
+            draw_full=True,
+            width=2,
         )
         if self.debug:
             pygame.draw.line(
@@ -190,7 +234,6 @@ class GameScreen(Screen):
                 self.game.player.pos + self.game.player.vel * 0.1,
                 width=2,
             )
-
 
         # cursor controls
         if self.control_type == "cursor":

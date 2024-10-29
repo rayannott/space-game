@@ -245,3 +245,20 @@ class Notification(Label):
             self._is_alive = False
         if self._is_alive:
             super().update()
+
+
+def draw_circular_status_bar(
+    surface: pygame.Surface,
+    pos: Vector2,
+    slider: Slider,
+    radius: float,
+    color: Color = Color("white"),
+    draw_full: bool = False,
+    width: int = 3,
+):
+    arc_percent = slider.get_percent_full()
+    if draw_full or arc_percent < 1.0:
+        angle = math.pi * (2 * arc_percent + 0.5)
+        rect = pygame.Rect(0, 0, radius * 2, radius * 2)
+        rect.center = pos
+        pygame.draw.arc(surface, color, rect, math.pi / 2, angle, width=width)
